@@ -1,0 +1,24 @@
+name: Deploy - ot-api (manual)
+on:
+  workflow_dispatch: {}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - run: aws s3 cp main.py s3://${{ vars.S3_BUCKET }}/ot-api/main.py
+      - run: aws s3 cp requirements.txt s3://${{ vars.S3_BUCKET }}/ot-api/requirements.txt
+      - run: >
+          aws ssm send-command --instance-ids ${{ vars.INSTANCE_ID }}
+          --document-name AWS-RunShellScript
+          --parameters '{"commands":["cd ~/ot-api",
+          "aws s3 cp s3://${{ vars.S3_BUCKET }}/ot-api/main.py main.py",
+          "source venv/bin/activate && pip install -r requirements.txt",
+          "python3 -m py_compile main.py repository.py",
+          "sudo systemctl restart ot-api",
+          "curl -s http://127.0.0.1:5001/api/saludo"]}'

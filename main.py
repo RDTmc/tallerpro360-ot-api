@@ -8,6 +8,7 @@ from functools import lru_cache
 
 import asyncpg
 import jwt
+import repository
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
@@ -60,20 +61,39 @@ async def pool() -> asyncpg.Pool:
 
 # ---------------------------------------------------------------- esquemas
 class ItemIn(BaseModel):
-    concepto: str = Field(max_length=40)
-    cantidad: float = Field(gt=0)
-    precio_unit: int = Field(ge=0)
+    concepto: str = Field(min_length=1, max_length=40)
+    cantidad: float = Field(gt=0, le=999999)
+    precio_unit: int = Field(ge=0, le=999999999)
 
 
 class OTIn(BaseModel):
-    cliente_id: str = Field(max_length=20)
-    patente: str = Field(max_length=10)
+    cliente_id: str = Field(min_length=1, max_length=20)
+    patente: str = Field(min_length=6, max_length=10)
     descripcion: str = Field(default="", max_length=200)
-    total: int = Field(default=0, ge=0)
-    items: list[ItemIn] = []
+    total: int = Field(default=0, ge=0, le=99999999999)
+    items: list[ItemIn] = Field(default=[], max_length=100)
+
+
+def normalizar(datos: OTIn) -> OTIn:
+    """Mayúsculas y sin espacios: evita duplicados tipo 'xx yy11' vs 'XXYY11'."""
+    datos.cliente_id = datos.cliente_id.strip().upper()
+    datos.patente = datos.patente.strip().upper().replace(" ", "").replace("-", "")
+    datos.descripcion = datos.descripcion.strip()
+    return datos
 
 
 # ---------------------------------------------------------------- rutas
+@app.get("/api/health")
+async def health():
+    """Sonda pública para monitoreo/demo (no expone datos)."""
+    try:
+        p = await pool()
+        await p.fetchval("SELECT 1")
+        return {"status": "ok", "db": "up"}
+    except Exception:
+        raise HTTPException(status_code=503, detail="DB no disponible")
+
+
 @app.get("/api/saludo")
 async def saludo():
     return {"mensaje": "Hola desde TallerPro360"}
@@ -82,59 +102,33 @@ async def saludo():
 @app.get("/api/ot")
 async def listar_ot(_: dict = Depends(verificar_token)):
     p = await pool()
-    rows = await p.fetch("SELECT * FROM v_ot_resumen ORDER BY created_at DESC")
-    return [dict(r) for r in rows]
+    return await repository.listar_resumen(p)
 
 
 @app.get("/api/ot/{ot_id}")
 async def obtener_ot(ot_id: str, _: dict = Depends(verificar_token)):
-    p = await pool()
-    ot = await p.fetchrow("SELECT * FROM ot WHERE ot_id = $1", ot_id)
+    ot = await repository.obtener_con_items(await pool(), ot_id)
     if not ot:
         raise HTTPException(status_code=404, detail="OT no encontrada")
-    items = await p.fetch("SELECT * FROM ot_item WHERE ot_id = $1 ORDER BY item_id", ot_id)
-    return {**dict(ot), "items": [dict(i) for i in items]}
+    return ot
 
 
 @app.post("/api/ot", status_code=201)
 async def crear_ot(datos: OTIn, _: dict = Depends(verificar_token)):
-    p = await pool()
-    async with p.acquire() as conn, conn.transaction():
-        ot_id = await conn.fetchval(
-            "INSERT INTO ot (cliente_id, patente, descripcion, total)"
-            " VALUES ($1,$2,$3,$4) RETURNING ot_id",
-            datos.cliente_id, datos.patente, datos.descripcion, datos.total,
-        )
-        for it in datos.items:
-            await conn.execute(
-                "INSERT INTO ot_item (ot_id, concepto, cantidad, precio_unit)"
-                " VALUES ($1,$2,$3,$4)",
-                ot_id, it.concepto, it.cantidad, it.precio_unit,
-            )
-        await conn.execute(
-            "INSERT INTO ot_event (ot_id, event_type, payload_json) VALUES ($1,'OtCreada',$2)",
-            ot_id, f'{{"eventType":"OtCreada","otId":"{ot_id}"}}',
-        )
-    return await obtener_ot(ot_id)
+    return await repository.crear(await pool(), normalizar(datos))
 
 
 @app.put("/api/ot/{ot_id}")
 async def actualizar_ot(ot_id: str, datos: OTIn, _: dict = Depends(verificar_token)):
-    p = await pool()
-    row = await p.fetchval(
-        "UPDATE ot SET cliente_id=$2, patente=$3, descripcion=$4, total=$5,"
-        " updated_at=now() WHERE ot_id=$1 RETURNING ot_id",
-        ot_id, datos.cliente_id, datos.patente, datos.descripcion, datos.total,
-    )
-    if not row:
+    ot = await repository.actualizar(await pool(), ot_id, normalizar(datos))
+    if not ot:
         raise HTTPException(status_code=404, detail="OT no encontrada")
-    return await obtener_ot(ot_id)
+    return ot
 
 
 @app.delete("/api/ot/{ot_id}")
 async def eliminar_ot(ot_id: str, _: dict = Depends(verificar_token)):
-    p = await pool()
-    row = await p.fetchval("DELETE FROM ot WHERE ot_id=$1 RETURNING ot_id", ot_id)
-    if not row:
+    ok = await repository.eliminar(await pool(), ot_id)
+    if not ok:
         raise HTTPException(status_code=404, detail="OT no encontrada")
     return {"mensaje": f"OT {ot_id} eliminada"}

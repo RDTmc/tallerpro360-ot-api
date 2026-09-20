@@ -1,0 +1,69 @@
+"""Capa de repositorios TallerPro360 (entidades = esquemas Pydantic en main.py).
+
+Toda query va parametrizada ($1, $2...) — sin concatenación de SQL.
+Las escrituras multi-tabla usan una única transacción sobre una conexión
+adquirida del pool (el pool solo presta conexiones, no transacciona).
+"""
+import asyncpg
+
+
+async def listar_resumen(pool: asyncpg.Pool) -> list[dict]:
+    rows = await pool.fetch("SELECT * FROM v_ot_resumen ORDER BY created_at DESC")
+    return [dict(r) for r in rows]
+
+
+async def obtener_con_items(pool: asyncpg.Pool, ot_id: str) -> dict | None:
+    ot = await pool.fetchrow("SELECT * FROM ot WHERE ot_id = $1", ot_id)
+    if not ot:
+        return None
+    items = await pool.fetch(
+        "SELECT * FROM ot_item WHERE ot_id = $1 ORDER BY item_id", ot_id
+    )
+    return {**dict(ot), "items": [dict(i) for i in items]}
+
+
+async def crear(pool: asyncpg.Pool, datos) -> dict:
+    """Crea OT + ítems + evento de auditoría en una transacción."""
+    async with pool.acquire() as conn, conn.transaction():
+        ot_id = await conn.fetchval(
+            "INSERT INTO ot (cliente_id, patente, descripcion, total)"
+            " VALUES ($1,$2,$3,$4) RETURNING ot_id",
+            datos.cliente_id, datos.patente, datos.descripcion, datos.total,
+        )
+        for it in datos.items:
+            await conn.execute(
+                "INSERT INTO ot_item (ot_id, concepto, cantidad, precio_unit)"
+                " VALUES ($1,$2,$3,$4)",
+                ot_id, it.concepto, it.cantidad, it.precio_unit,
+            )
+        await conn.execute(
+            "INSERT INTO ot_event (ot_id, event_type, payload_json)"
+            " VALUES ($1,'OtCreada',$2)",
+            ot_id, f'{{"eventType":"OtCreada","otId":"{ot_id}"}}',
+        )
+    return await obtener_con_items(pool, ot_id)
+
+
+async def actualizar(pool: asyncpg.Pool, ot_id: str, datos) -> dict | None:
+    """Actualiza cabecera y reemplaza ítems (transaccional)."""
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchval(
+            "UPDATE ot SET cliente_id=$2, patente=$3, descripcion=$4, total=$5,"
+            " updated_at=now() WHERE ot_id=$1 RETURNING ot_id",
+            ot_id, datos.cliente_id, datos.patente, datos.descripcion, datos.total,
+        )
+        if not row:
+            return None
+        await conn.execute("DELETE FROM ot_item WHERE ot_id=$1", ot_id)
+        for it in datos.items:
+            await conn.execute(
+                "INSERT INTO ot_item (ot_id, concepto, cantidad, precio_unit)"
+                " VALUES ($1,$2,$3,$4)",
+                ot_id, it.concepto, it.cantidad, it.precio_unit,
+            )
+    return await obtener_con_items(pool, ot_id)
+
+
+async def eliminar(pool: asyncpg.Pool, ot_id: str) -> bool:
+    row = await pool.fetchval("DELETE FROM ot WHERE ot_id=$1 RETURNING ot_id", ot_id)
+    return row is not None
