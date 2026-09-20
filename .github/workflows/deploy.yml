@@ -10,6 +10,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
       - run: aws s3 cp main.py s3://${{ vars.S3_BUCKET }}/ot-api/main.py
       - run: aws s3 cp requirements.txt s3://${{ vars.S3_BUCKET }}/ot-api/requirements.txt
