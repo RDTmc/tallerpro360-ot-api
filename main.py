@@ -1,0 +1,140 @@
+"""Microservicio TallerPro360 - Órdenes de Trabajo (FastAPI + PostgreSQL + JWT).
+
+Seguridad: misma receta probada en la Guía 4 (PyJWKClient + Entra ID v2.0).
+Dominio: tablas ot / ot_item / ot_event / notify_log (Script_postgres.sql).
+"""
+import os
+from functools import lru_cache
+
+import asyncpg
+import jwt
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------- config
+TENANT_ID = os.getenv("TENANT_ID", "a4cc5fc6-a27b-43af-91af-bab64b4e97ce")
+APP_CLIENT_ID = os.getenv("APP_CLIENT_ID", "94997922-80e9-4664-8743-85316d34ba1b")
+ISSUER = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0"
+JWKS_URL = f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
+AUDIENCE = APP_CLIENT_ID
+REQUIRED_SCOPE = os.getenv("REQUIRED_SCOPE", "productos.read")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://tallerpro360:ChangeMe_2025!@localhost:5432/tallerpro360"
+)
+
+app = FastAPI(title="TallerPro360 OT API", version="1.0.0")
+_pool: asyncpg.Pool | None = None
+
+
+# ---------------------------------------------------------------- seguridad
+@lru_cache(maxsize=1)
+def _jwks_client() -> jwt.PyJWKClient:
+    return jwt.PyJWKClient(JWKS_URL)
+
+
+async def verificar_token(authorization: str = Header(default="")) -> dict:
+    """401 si falta/inválido, 403 si no trae el scope. Igual que Flask Guía 4."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Falta token")
+    token = authorization.split(" ", 1)[1]
+    try:
+        key = _jwks_client().get_signing_key_from_jwt(token)
+        payload = jwt.decode(
+            token, key.key, algorithms=[key.algorithm_name],
+            audience=AUDIENCE, issuer=ISSUER,
+        )
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    if REQUIRED_SCOPE not in str(payload.get("scp", "")).split():
+        raise HTTPException(status_code=403, detail="Scope no autorizado")
+    return payload
+
+
+# ---------------------------------------------------------------- db
+async def pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    return _pool
+
+
+# ---------------------------------------------------------------- esquemas
+class ItemIn(BaseModel):
+    concepto: str = Field(max_length=40)
+    cantidad: float = Field(gt=0)
+    precio_unit: int = Field(ge=0)
+
+
+class OTIn(BaseModel):
+    cliente_id: str = Field(max_length=20)
+    patente: str = Field(max_length=10)
+    descripcion: str = Field(default="", max_length=200)
+    total: int = Field(default=0, ge=0)
+    items: list[ItemIn] = []
+
+
+# ---------------------------------------------------------------- rutas
+@app.get("/api/saludo")
+async def saludo():
+    return {"mensaje": "Hola desde TallerPro360"}
+
+
+@app.get("/api/ot")
+async def listar_ot(_: dict = Depends(verificar_token)):
+    p = await pool()
+    rows = await p.fetch("SELECT * FROM v_ot_resumen ORDER BY created_at DESC")
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/ot/{ot_id}")
+async def obtener_ot(ot_id: str, _: dict = Depends(verificar_token)):
+    p = await pool()
+    ot = await p.fetchrow("SELECT * FROM ot WHERE ot_id = $1", ot_id)
+    if not ot:
+        raise HTTPException(status_code=404, detail="OT no encontrada")
+    items = await p.fetch("SELECT * FROM ot_item WHERE ot_id = $1 ORDER BY item_id", ot_id)
+    return {**dict(ot), "items": [dict(i) for i in items]}
+
+
+@app.post("/api/ot", status_code=201)
+async def crear_ot(datos: OTIn, _: dict = Depends(verificar_token)):
+    p = await pool()
+    async with p.acquire() as conn, conn.transaction():
+        ot_id = await conn.fetchval(
+            "INSERT INTO ot (cliente_id, patente, descripcion, total)"
+            " VALUES ($1,$2,$3,$4) RETURNING ot_id",
+            datos.cliente_id, datos.patente, datos.descripcion, datos.total,
+        )
+        for it in datos.items:
+            await conn.execute(
+                "INSERT INTO ot_item (ot_id, concepto, cantidad, precio_unit)"
+                " VALUES ($1,$2,$3,$4)",
+                ot_id, it.concepto, it.cantidad, it.precio_unit,
+            )
+        await conn.execute(
+            "INSERT INTO ot_event (ot_id, event_type, payload_json) VALUES ($1,'OtCreada',$2)",
+            ot_id, f'{{"eventType":"OtCreada","otId":"{ot_id}"}}',
+        )
+    return await obtener_ot(ot_id)
+
+
+@app.put("/api/ot/{ot_id}")
+async def actualizar_ot(ot_id: str, datos: OTIn, _: dict = Depends(verificar_token)):
+    p = await pool()
+    row = await p.fetchval(
+        "UPDATE ot SET cliente_id=$2, patente=$3, descripcion=$4, total=$5,"
+        " updated_at=now() WHERE ot_id=$1 RETURNING ot_id",
+        ot_id, datos.cliente_id, datos.patente, datos.descripcion, datos.total,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="OT no encontrada")
+    return await obtener_ot(ot_id)
+
+
+@app.delete("/api/ot/{ot_id}")
+async def eliminar_ot(ot_id: str, _: dict = Depends(verificar_token)):
+    p = await pool()
+    row = await p.fetchval("DELETE FROM ot WHERE ot_id=$1 RETURNING ot_id", ot_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="OT no encontrada")
+    return {"mensaje": f"OT {ot_id} eliminada"}
