@@ -51,6 +51,25 @@ async def verificar_token(authorization: str = Header(default="")) -> dict:
     return payload
 
 
+def autoriza_rol(payload: dict, roles_permitidos: tuple[str, ...]) -> None:
+    """403 si el token trae claim `roles` y ninguno está permitido.
+
+    Tolerante: tokens antiguos sin claim `roles` pasan (manda el scope).
+    """
+    roles_token = payload.get("roles")
+    if roles_token is None:
+        return
+    if not any(r in roles_permitidos for r in roles_token):
+        raise HTTPException(status_code=403, detail="Rol no autorizado")
+
+
+def requiere_rol(*roles_permitidos: str):
+    async def dependencia(payload: dict = Depends(verificar_token)) -> dict:
+        autoriza_rol(payload, roles_permitidos)
+        return payload
+    return dependencia
+
+
 # ---------------------------------------------------------------- db
 async def pool() -> asyncpg.Pool:
     global _pool
@@ -114,12 +133,12 @@ async def obtener_ot(ot_id: str, _: dict = Depends(verificar_token)):
 
 
 @app.post("/api/ot", status_code=201)
-async def crear_ot(datos: OTIn, _: dict = Depends(verificar_token)):
+async def crear_ot(datos: OTIn, _: dict = Depends(requiere_rol("OT.Admin", "OT.Operador"))):
     return await repository.crear(await pool(), normalizar(datos))
 
 
 @app.put("/api/ot/{ot_id}")
-async def actualizar_ot(ot_id: str, datos: OTIn, _: dict = Depends(verificar_token)):
+async def actualizar_ot(ot_id: str, datos: OTIn, _: dict = Depends(requiere_rol("OT.Admin", "OT.Operador"))):
     ot = await repository.actualizar(await pool(), ot_id, normalizar(datos))
     if not ot:
         raise HTTPException(status_code=404, detail="OT no encontrada")
@@ -127,7 +146,7 @@ async def actualizar_ot(ot_id: str, datos: OTIn, _: dict = Depends(verificar_tok
 
 
 @app.delete("/api/ot/{ot_id}")
-async def eliminar_ot(ot_id: str, _: dict = Depends(verificar_token)):
+async def eliminar_ot(ot_id: str, _: dict = Depends(requiere_rol("OT.Admin"))):
     ok = await repository.eliminar(await pool(), ot_id)
     if not ok:
         raise HTTPException(status_code=404, detail="OT no encontrada")

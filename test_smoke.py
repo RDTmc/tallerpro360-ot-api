@@ -1,7 +1,7 @@
 """Smoke tests sin BD: auth (401/403), validación (422) y sondas públicas."""
 from fastapi.testclient import TestClient
 
-from main import app
+from main import app, autoriza_rol
 
 c = TestClient(app)
 
@@ -27,3 +27,14 @@ def test_openapi_expone_rutas():
     paths = c.get("/openapi.json").json()["paths"]
     for p in ["/api/saludo", "/api/health", "/api/ot", "/api/ot/{ot_id}"]:
         assert p in paths
+
+
+def test_roles_admin_pasa_operador_no_en_delete():
+    autoriza_rol({"roles": ["OT.Admin"]}, ("OT.Admin",))
+    autoriza_rol({"roles": ["OT.Admin", "OT.Lector"]}, ("OT.Admin", "OT.Operador"))
+    autoriza_rol({}, ("OT.Admin",))  # token antiguo sin claim: manda el scope
+    import pytest
+    with pytest.raises(Exception):
+        autoriza_rol({"roles": ["OT.Lector"]}, ("OT.Admin",))
+    with pytest.raises(Exception):
+        autoriza_rol({"roles": ["OT.Operador"]}, ("OT.Admin",))
