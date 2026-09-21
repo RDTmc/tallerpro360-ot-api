@@ -25,7 +25,8 @@ def test_token_invalido_401():
 
 def test_openapi_expone_rutas():
     paths = c.get("/openapi.json").json()["paths"]
-    for p in ["/api/saludo", "/api/health", "/api/ot", "/api/ot/{ot_id}"]:
+    for p in ["/api/saludo", "/api/health", "/api/ot", "/api/ot/{ot_id}",
+              "/api/clientes"]:
         assert p in paths
 
 

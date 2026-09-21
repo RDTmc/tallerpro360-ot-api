@@ -75,3 +75,36 @@ async def actualizar(pool: asyncpg.Pool, ot_id: str, datos) -> dict | None:
 async def eliminar(pool: asyncpg.Pool, ot_id: str) -> bool:
     row = await pool.fetchval("DELETE FROM ot WHERE ot_id=$1 RETURNING ot_id", ot_id)
     return row is not None
+
+
+# ---------------------------------------------------------------- clientes
+async def buscar_clientes(pool: asyncpg.Pool, q: str = "") -> list[dict]:
+    if q:
+        like = f"%{q}%"
+        rows = await pool.fetch(
+            "SELECT rut, codigo, nombres, apellidos, fecha_nac, correo, telefono"
+            " FROM cliente WHERE rut ILIKE $1 OR codigo ILIKE $1"
+            " OR nombres ILIKE $1 OR apellidos ILIKE $1 ORDER BY nombres LIMIT 20",
+            like,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT rut, codigo, nombres, apellidos, fecha_nac, correo, telefono"
+            " FROM cliente ORDER BY nombres LIMIT 20"
+        )
+    return [dict(r) for r in rows]
+
+
+async def crear_cliente(pool: asyncpg.Pool, datos) -> dict:
+    row = await pool.fetchrow(
+        "INSERT INTO cliente (rut, codigo, nombres, apellidos, fecha_nac, correo, telefono)"
+        " VALUES ($1,$2,$3,$4,$5,$6,$7)"
+        " RETURNING rut, codigo, nombres, apellidos, fecha_nac, correo, telefono",
+        datos.rut, datos.codigo, datos.nombres, datos.apellidos,
+        datos.fecha_nac, datos.correo, datos.telefono,
+    )
+    return dict(row)
+
+
+async def existe_cliente(pool: asyncpg.Pool, codigo: str) -> bool:
+    return await pool.fetchval("SELECT 1 FROM cliente WHERE codigo=$1", codigo) is not None

@@ -101,6 +101,16 @@ def normalizar(datos: OTIn) -> OTIn:
     return datos
 
 
+class ClienteIn(BaseModel):
+    rut: str = Field(min_length=9, max_length=12)
+    codigo: str = Field(min_length=1, max_length=20)
+    nombres: str = Field(min_length=1, max_length=60)
+    apellidos: str = Field(min_length=1, max_length=60)
+    fecha_nac: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    correo: str | None = Field(default=None, max_length=100)
+    telefono: str | None = Field(default=None, max_length=20)
+
+
 # ---------------------------------------------------------------- rutas
 @app.get("/api/health")
 async def health():
@@ -133,12 +143,18 @@ async def obtener_ot(ot_id: str, _: dict = Depends(verificar_token)):
 
 @app.post("/api/ot", status_code=201)
 async def crear_ot(datos: OTIn, _: dict = Depends(requiere_rol("OT.Admin", "OT.Operador"))):
-    return await repository.crear(await pool(), normalizar(datos))
+    datos = normalizar(datos)
+    if not await repository.existe_cliente(await pool(), datos.cliente_id):
+        raise HTTPException(status_code=422, detail="Cliente no existe")
+    return await repository.crear(await pool(), datos)
 
 
 @app.put("/api/ot/{ot_id}")
 async def actualizar_ot(ot_id: str, datos: OTIn, _: dict = Depends(requiere_rol("OT.Admin", "OT.Operador"))):
-    ot = await repository.actualizar(await pool(), ot_id, normalizar(datos))
+    datos = normalizar(datos)
+    if not await repository.existe_cliente(await pool(), datos.cliente_id):
+        raise HTTPException(status_code=422, detail="Cliente no existe")
+    ot = await repository.actualizar(await pool(), ot_id, datos)
     if not ot:
         raise HTTPException(status_code=404, detail="OT no encontrada")
     return ot
@@ -150,3 +166,17 @@ async def eliminar_ot(ot_id: str, _: dict = Depends(requiere_rol("OT.Admin"))):
     if not ok:
         raise HTTPException(status_code=404, detail="OT no encontrada")
     return {"mensaje": f"OT {ot_id} eliminada"}
+
+
+# ---------------------------------------------------------------- clientes
+@app.get("/api/clientes")
+async def listar_clientes(q: str = "", _: dict = Depends(verificar_token)):
+    return await repository.buscar_clientes(await pool(), q.strip()[:60])
+
+
+@app.post("/api/clientes", status_code=201)
+async def crear_cliente(datos: ClienteIn, _: dict = Depends(requiere_rol("OT.Admin", "OT.Operador"))):
+    try:
+        return await repository.crear_cliente(await pool(), datos)
+    except Exception:
+        raise HTTPException(status_code=409, detail="RUT o código ya existe")
