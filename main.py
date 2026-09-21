@@ -3,6 +3,7 @@
 Seguridad: misma receta probada en la Guía 4 (PyJWKClient + Entra ID v2.0).
 Dominio: tablas ot / ot_item / ot_event / notify_log (Script_postgres.sql).
 """
+from datetime import date
 import os
 from functools import lru_cache
 
@@ -106,7 +107,7 @@ class ClienteIn(BaseModel):
     codigo: str = Field(min_length=1, max_length=20)
     nombres: str = Field(min_length=1, max_length=60)
     apellidos: str = Field(min_length=1, max_length=60)
-    fecha_nac: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    fecha_nac: date | None = None
     correo: str | None = Field(default=None, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
 
