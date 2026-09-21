@@ -7,8 +7,16 @@ adquirida del pool (el pool solo presta conexiones, no transacciona).
 import asyncpg
 
 
-async def listar_resumen(pool: asyncpg.Pool) -> list[dict]:
-    rows = await pool.fetch("SELECT * FROM v_ot_resumen ORDER BY created_at DESC")
+async def listar_resumen(pool: asyncpg.Pool, q: str = "") -> list[dict]:
+    if q:
+        like = f"%{q}%"
+        rows = await pool.fetch(
+            "SELECT * FROM v_ot_resumen WHERE ot_id ILIKE $1 OR cliente_id ILIKE $1"
+            " OR patente ILIKE $1 OR descripcion ILIKE $1 ORDER BY created_at DESC",
+            like,
+        )
+    else:
+        rows = await pool.fetch("SELECT * FROM v_ot_resumen ORDER BY created_at DESC")
     return [dict(r) for r in rows]
 
 

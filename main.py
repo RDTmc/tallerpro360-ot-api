@@ -119,9 +119,8 @@ async def saludo():
 
 
 @app.get("/api/ot")
-async def listar_ot(_: dict = Depends(verificar_token)):
-    p = await pool()
-    return await repository.listar_resumen(p)
+async def listar_ot(q: str = "", _: dict = Depends(verificar_token)):
+    return await repository.listar_resumen(await pool(), q.strip()[:60])
 
 
 @app.get("/api/ot/{ot_id}")
