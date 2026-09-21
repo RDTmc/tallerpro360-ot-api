@@ -1,10 +1,12 @@
-name: Deploy - ot-api (manual)
+name: Deploy - ot-api
 on:
-  push:
-    branches: [main]
-    paths: ["main.py", "repository.py", "requirements.txt"]  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["CI - ot-api"]
+    types: [completed]
+  workflow_dispatch: {}
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
