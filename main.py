@@ -20,9 +20,7 @@ ISSUER = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0"
 JWKS_URL = f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
 AUDIENCE = APP_CLIENT_ID
 REQUIRED_SCOPE = os.getenv("REQUIRED_SCOPE", "productos.read")
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://tallerpro360:ChangeMe_2025!@localhost:5432/tallerpro360"
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 app = FastAPI(title="TallerPro360 OT API", version="1.0.0")
 _pool: asyncpg.Pool | None = None
@@ -74,6 +72,8 @@ def requiere_rol(*roles_permitidos: str):
 # ---------------------------------------------------------------- db
 async def pool() -> asyncpg.Pool:
     global _pool
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="DB no configurada")
     if _pool is None:
         _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
     return _pool
