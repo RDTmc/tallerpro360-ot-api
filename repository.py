@@ -1,9 +1,7 @@
 """Capa de repositorios TallerPro360 (entidades = esquemas Pydantic en main.py).
+Toda query va parametrizada ($1, $2...) -> sin concatenación de SQL, para mitigar 
+inyecciones"""
 
-Toda query va parametrizada ($1, $2...) — sin concatenación de SQL.
-Las escrituras multi-tabla usan una única transacción sobre una conexión
-adquirida del pool (el pool solo presta conexiones, no transacciona).
-"""
 import asyncpg
 
 
@@ -77,7 +75,7 @@ async def eliminar(pool: asyncpg.Pool, ot_id: str) -> bool:
     return row is not None
 
 
-# ---------------------------------------------------------------- clientes
+# --- clientes
 async def buscar_clientes(pool: asyncpg.Pool, q: str = "") -> list[dict]:
     if q:
         like = f"%{q}%"

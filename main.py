@@ -1,8 +1,4 @@
-"""Microservicio TallerPro360 - Órdenes de Trabajo (FastAPI + PostgreSQL + JWT).
-
-Seguridad: misma receta probada en la Guía 4 (PyJWKClient + Entra ID v2.0).
-Dominio: tablas ot / ot_item / ot_event / notify_log (Script_postgres.sql).
-"""
+"""Microservicio TallerPro360 (FastAPI + PostgreSQL + JWT)."""
 from datetime import date
 import os
 from functools import lru_cache
@@ -13,7 +9,7 @@ import repository
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------- config
+# --- config
 TENANT_ID = os.getenv("TENANT_ID", "a4cc5fc6-a27b-43af-91af-bab64b4e97ce")
 APP_CLIENT_ID = os.getenv("APP_CLIENT_ID", "94997922-80e9-4664-8743-85316d34ba1b")
 ISSUER = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0"
@@ -26,14 +22,14 @@ app = FastAPI(title="TallerPro360 OT API", version="1.0.0")
 _pool: asyncpg.Pool | None = None
 
 
-# ---------------------------------------------------------------- seguridad
+# --- seguridad
 @lru_cache(maxsize=1)
 def _jwks_client() -> jwt.PyJWKClient:
     return jwt.PyJWKClient(JWKS_URL)
 
 
 async def verificar_token(authorization: str = Header(default="")) -> dict:
-    """401 si falta/inválido, 403 si no trae el scope. Igual que Flask Guía 4."""
+    """401 si falta/inválido, 403 si no trae el scope."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Falta token")
     token = authorization.split(" ", 1)[1]
@@ -51,10 +47,7 @@ async def verificar_token(authorization: str = Header(default="")) -> dict:
 
 
 def autoriza_rol(payload: dict, roles_permitidos: tuple[str, ...]) -> None:
-    """403 si el token trae claim `roles` y ninguno está permitido.
-
-    Tolerante: tokens antiguos sin claim `roles` pasan (manda el scope).
-    """
+    """403 si el token trae claim `roles` y ninguno está permitido."""
     roles_token = payload.get("roles")
     if roles_token is None:
         return
@@ -69,7 +62,7 @@ def requiere_rol(*roles_permitidos: str):
     return dependencia
 
 
-# ---------------------------------------------------------------- db
+# --- db
 async def pool() -> asyncpg.Pool:
     global _pool
     if not DATABASE_URL:
@@ -79,7 +72,7 @@ async def pool() -> asyncpg.Pool:
     return _pool
 
 
-# ---------------------------------------------------------------- esquemas
+# --- esquemas
 class ItemIn(BaseModel):
     concepto: str = Field(min_length=1, max_length=40)
     cantidad: float = Field(gt=0, le=999999)
@@ -95,7 +88,7 @@ class OTIn(BaseModel):
 
 
 def normalizar(datos: OTIn) -> OTIn:
-    """Mayúsculas y sin espacios: evita duplicados tipo 'xx yy11' vs 'XXYY11'."""
+    """Mayúsculas y sin espacios: evita duplicados."""
     datos.cliente_id = datos.cliente_id.strip().upper()
     datos.patente = datos.patente.strip().upper().replace(" ", "").replace("-", "")
     datos.descripcion = datos.descripcion.strip()
@@ -112,10 +105,10 @@ class ClienteIn(BaseModel):
     telefono: str | None = Field(default=None, max_length=20)
 
 
-# ---------------------------------------------------------------- rutas
+# --- rutas
 @app.get("/api/health")
 async def health():
-    """Sonda pública para monitoreo/demo (no expone datos)."""
+    """Para monitoreo/demo (no expone datos)."""
     try:
         p = await pool()
         await p.fetchval("SELECT 1")
@@ -169,7 +162,7 @@ async def eliminar_ot(ot_id: str, _: dict = Depends(requiere_rol("OT.Admin"))):
     return {"mensaje": f"OT {ot_id} eliminada"}
 
 
-# ---------------------------------------------------------------- clientes
+# --- clientes
 @app.get("/api/clientes")
 async def listar_clientes(q: str = "", _: dict = Depends(verificar_token)):
     return await repository.buscar_clientes(await pool(), q.strip()[:60])
